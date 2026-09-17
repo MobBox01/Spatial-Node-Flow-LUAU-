@@ -1,0 +1,178 @@
+--Workspace
+local replicatedStorage = game:GetService("ReplicatedStorage")
+--Workspace
+
+--Basic Rooms
+local BasicRooms = 
+	{
+		replicatedStorage.BasicRooms.Straight,
+		replicatedStorage.BasicRooms.RightTurn,
+		replicatedStorage.BasicRooms.LeftTurn,
+		replicatedStorage.BasicRooms.T,
+		replicatedStorage.BasicRooms.BigT
+		--replicatedStorage.BasicRooms.Plus
+	}
+--Basic Rooms
+
+--Typically containing multiple directions that lead to new rooms
+local AdvancedRooms = 
+	{
+	}
+
+--Start the queue
+local exitQueue = {game.Workspace.StartRoom.Exit}
+local doorQueue = {game.Workspace.StartRoom.Exit}
+local currentFloor ={}
+
+--Other queues
+local deletionQueue = {}
+local wallQueue = {}
+local expansionQueue = {}
+
+--Other
+local roomNumber
+local roomCount = 0
+--Other
+
+--Place the room and loop through the exit queue
+local function generateRoom(chosenRoom:number)
+	--Obtain room
+	local currentRoom = BasicRooms[chosenRoom].RoomModel:Clone()
+	currentRoom.Parent = game.Workspace
+	
+	--Exit, Door, Expansion queue
+	for i, v in currentRoom:GetChildren() do
+		if v:IsA("BasePart") and v.Name == "Exit" then
+			table.insert(exitQueue,v)
+			table.insert(doorQueue, v)
+		elseif v.Name == "Expansion" then
+			table.insert(expansionQueue, v)
+		end
+	end
+
+	--Place the room
+	currentRoom:PivotTo(exitQueue[1].CFrame)
+	table.insert(currentFloor, currentRoom)
+	
+	--Clean information 
+	table.remove(exitQueue,1)
+end
+
+--Place the hitboxes and check if it hits anything
+local function checkHitbox(chosenRoom:number)
+	--Place the hitbox
+	local currentHitbox = BasicRooms[chosenRoom].Space:Clone()
+	currentHitbox.Parent = game.Workspace
+	currentHitbox:PivotTo(exitQueue[1].CFrame)
+	
+	--Check if any part is in the hitbox
+	--Ignore entrance part (Intentional)
+	for i, v in pairs(currentHitbox:GetChildren()) do
+		if #workspace:GetPartsInPart(v) > 0 and v.Name ~= "Entrance" then
+			currentHitbox:Destroy()
+			table.insert(wallQueue,exitQueue[1])
+			table.remove(exitQueue,1)
+
+			return false
+		end
+	end
+	
+	--True if no parts are in the space
+	currentHitbox:Destroy()
+	roomCount += 1
+	return true
+end
+
+function clearFloor()
+	for i, v in currentFloor do
+		v:Destroy()
+	end 
+	table.clear(currentFloor)
+end
+
+
+--Process areas that connect!
+local function processConnections()
+	
+	wait(3)
+	--Check if there is a exit or expansion in the spot 
+	for i,v in expansionQueue  do
+		v.Expansion.Size = Vector3.new(2,2,2)
+		for i, e in workspace:GetPartsInPart(v.Expansion) do
+			if e.Name == "Exit" or e.Name == "Expansion" then
+				table.insert(deletionQueue,v)
+			end
+		end
+	end
+	
+	for i, v in deletionQueue do
+		v:Destroy()
+	end
+	table.clear(deletionQueue)
+end
+
+
+--Process each door 
+local function processDoorNodes()
+	--This function will check all DOOR PART HITBOXES to see if there is a entrance part
+	--This can also just increase its size ig if i need to
+	for i, v in doorQueue do
+		local currentDoor = replicatedStorage.Objects.Door:Clone()
+		currentDoor.Parent = game.Workspace
+		currentDoor:PivotTo(v.CFrame)
+	end
+end
+
+--Start the floor building process
+local function newFloor()
+	while #exitQueue > 0 and roomCount < 50 do
+		roomNumber = math.random(1,#BasicRooms)
+		if checkHitbox(roomNumber) then
+			task.wait(.1)
+			generateRoom(roomNumber)
+		end
+	end
+
+	table.clear(exitQueue)
+	processConnections()
+	processDoorNodes()
+end
+
+
+for i = 0, 0 do
+	newFloor()
+	task.wait(20)
+	--clearFloor()
+	task.wait(1)
+end
+
+--[[
+local start = game.Workspace.StartRoom
+local replicatedStorage = game:GetService("ReplicatedStorage")
+local currentRoom = start
+local newRoom
+
+for i = 1, 4 do
+	
+	newRoom = replicatedStorage.BasicRooms.Straight.StraightLonger.RoomModel:Clone()
+	newRoom.Parent = game.Workspace
+	newRoom:PivotTo(currentRoom.Exit.CFrame)
+	currentRoom = newRoom
+end
+]]
+
+--PreviousRoom -> The last room that was placed
+--CurrentRoom -> The new room awaiting to be placed
+--CurrentHitbox -> The new hitbox
+
+
+--[[
+if ROOM.Name == "T" then
+	for i = 1, 4 do
+		ROOM.
+end
+]]
+
+--~[Idea 1]: [(New Barrier Length)+(Old Barrier Length)]/2 spawning in a room [DEPRECATED]
+--Idea 2: Make the model hitbox have a entrance point that snaps to the exit of the previous room 
+--2.1 Expansion: The model will have to have a entrance point in its hitbox now
