@@ -1,178 +1,204 @@
---Workspace
-local replicatedStorage = game:GetService("ReplicatedStorage")
---Workspace
+--Services
+local pathFinder = game:GetService("PathfindingService")
+local heartBreat = game:GetService("RunService")
+local serverScript = game:GetService("ServerScriptService")
+local progressTracker = require(serverScript:WaitForChild("RoomProgessTracker"))
+local entityStats = require(serverScript:WaitForChild("EntityStats"))
 
---Basic Rooms
-local BasicRooms = 
-	{
-		replicatedStorage.BasicRooms.Straight,
-		replicatedStorage.BasicRooms.RightTurn,
-		replicatedStorage.BasicRooms.LeftTurn,
-		replicatedStorage.BasicRooms.T,
-		replicatedStorage.BasicRooms.BigT
-		--replicatedStorage.BasicRooms.Plus
+local floorCleared = game:GetService("ServerScriptService"):WaitForChild("FloorCleared")
+--Services
+
+
+--Default path finder all entities will use
+
+
+
+--Entities
+local activeEntities = {}
+local allVisibleNodes = {}
+
+
+--Create a visible blue dot pathway for debugging purposes
+local function createVisiblePath(pathWay:{PathWaypoint})    
+	--Create, and place a node at each PathWayPoint
+	local temp = {}
+	local color = Color3.fromRGB(math.random(90,255),math.random(90,255),math.random(90,255))
+	for i, v in pathWay do
+		local part = game.Workspace.Path:Clone()
+		part.Parent = game.Workspace
+		part.Color = color
+		part.Position = v.Position
+		table.insert(temp,part)
+	end
+
+	table.insert(allVisibleNodes,temp)
+end
+
+
+local function createFirstPath(index:number)
+	--Find the current entity
+	local atIndex = activeEntities[index]
+	local pathAgent = pathFinder:CreatePath(
+		{
+			AgentRadius = .5,
+			AgentHeight = 1,
+			AgentCanJump = false,
+			WaypointSpacing = 10,
+			Costs = {
+				PathBlocker = 999999, 
+				Conflict = 9999
+			}--Ignore unless they need to actually utilize that path
+		}
+	)
+
+
+	--Find random node, create path, store it
+	local random = math.random(1, #progressTracker.getNodeTracker())
+	pathAgent:ComputeAsync(atIndex.entityPosition, progressTracker.getNodeTracker()[random].Position)
+	local pathWay = pathAgent:GetWaypoints()::{PathWaypoint}
+
+
+	--Error handling
+	if pathAgent.Status == Enum.PathStatus.NoPath then
+		print("No path")
+	elseif pathAgent.Status == Enum.PathStatus.Success then
+		print("Path found")
+	end
+
+	atIndex.finalNode = progressTracker.getNodeTracker()[random].Position
+	--Set and create pathway
+
+	atIndex.entityPath = pathWay
+	createVisiblePath(pathWay)
+end
+
+
+--Create the path
+local function createPath(index:number)
+	local atIndex = activeEntities[index]
+	local pathAgent = pathFinder:CreatePath(
+		{
+			AgentRadius = .5,
+			AgentHeight = 1,
+			AgentCanJump = false,
+			WaypointSpacing = 10,
+			Costs = {
+				PathBlocker = 999999, 
+				Conflict = 9999
+			}--Ignore unless they need to actually utilize that path
+		}
+	)
+	
+	--Readability sake
+	local atFinalIndex = #atIndex.entityPath
+	local currentEndPos = atIndex.entityPath[atFinalIndex].Position
+	
+	
+	local tracker = progressTracker.getNodeTracker()
+	local random, targetNode
+	
+	
+	--Repeat until its not a 5 stud distance 
+	repeat
+		random = math.random(1, #tracker)
+		targetNode = tracker[random].Position
+	until (currentEndPos - targetNode).Magnitude > 5
+	
+	
+	pathAgent:ComputeAsync(currentEndPos, targetNode)
+	
+	--To point out issues
+	if pathAgent.Status == Enum.PathStatus.NoPath then
+		warn("No path")
+	elseif pathAgent.Status == Enum.PathStatus.Success then
+		print("Path found")
+		local pathWay = pathAgent:GetWaypoints()::{PathWaypoint}
+		atIndex.entityNextPath = pathWay
+
+		createVisiblePath(pathWay)
+	end
+end
+
+
+--Initialize the new path for the entity.
+local function newEntity(entity:Model,entityPos:BasePart,activation:number)
+	--Post all entity information
+	print("\nEntity spawn detected! Entity full name: ".. entity:GetFullName().. "\nActivation time: "..activation.."\nEntity start position: ".. tostring(entityPos.Position))
+	local enemyStats = entityStats.getEntityStats(entity.Name)
+	
+	
+	--Create the entity dictionary and store all information
+	local newEntity = {
+		entityModel = entity, --Obtain the model
+		entityPosition = entityPos.Position, --Obtain the node itself
+		isActive = false, --IS the entity active? This will determine if it moves or "sleeps"
+		activationTime = activation, --What is the Maximum time before it can start moving
+		entityPath = {}, --Swap with next when done
+		entityNextPath = {}, 
+		currentNode = 1,
+		Speed = enemyStats.Speed,
+		finalNode = nil
 	}
---Basic Rooms
 
---Typically containing multiple directions that lead to new rooms
-local AdvancedRooms = 
-	{
-	}
 
---Start the queue
-local exitQueue = {game.Workspace.StartRoom.Exit}
-local doorQueue = {game.Workspace.StartRoom.Exit}
-local currentFloor ={}
-
---Other queues
-local deletionQueue = {}
-local wallQueue = {}
-local expansionQueue = {}
-
---Other
-local roomNumber
-local roomCount = 0
---Other
-
---Place the room and loop through the exit queue
-local function generateRoom(chosenRoom:number)
-	--Obtain room
-	local currentRoom = BasicRooms[chosenRoom].RoomModel:Clone()
-	currentRoom.Parent = game.Workspace
-	
-	--Exit, Door, Expansion queue
-	for i, v in currentRoom:GetChildren() do
-		if v:IsA("BasePart") and v.Name == "Exit" then
-			table.insert(exitQueue,v)
-			table.insert(doorQueue, v)
-		elseif v.Name == "Expansion" then
-			table.insert(expansionQueue, v)
-		end
-	end
-
-	--Place the room
-	currentRoom:PivotTo(exitQueue[1].CFrame)
-	table.insert(currentFloor, currentRoom)
-	
-	--Clean information 
-	table.remove(exitQueue,1)
-end
-
---Place the hitboxes and check if it hits anything
-local function checkHitbox(chosenRoom:number)
-	--Place the hitbox
-	local currentHitbox = BasicRooms[chosenRoom].Space:Clone()
-	currentHitbox.Parent = game.Workspace
-	currentHitbox:PivotTo(exitQueue[1].CFrame)
-	
-	--Check if any part is in the hitbox
-	--Ignore entrance part (Intentional)
-	for i, v in pairs(currentHitbox:GetChildren()) do
-		if #workspace:GetPartsInPart(v) > 0 and v.Name ~= "Entrance" then
-			currentHitbox:Destroy()
-			table.insert(wallQueue,exitQueue[1])
-			table.remove(exitQueue,1)
-
-			return false
-		end
-	end
-	
-	--True if no parts are in the space
-	currentHitbox:Destroy()
-	roomCount += 1
-	return true
-end
-
-function clearFloor()
-	for i, v in currentFloor do
-		v:Destroy()
-	end 
-	table.clear(currentFloor)
+	--Store entity
+	table.insert(activeEntities,newEntity)
 end
 
 
---Process areas that connect!
-local function processConnections()
-	
-	wait(3)
-	--Check if there is a exit or expansion in the spot 
-	for i,v in expansionQueue  do
-		v.Expansion.Size = Vector3.new(2,2,2)
-		for i, e in workspace:GetPartsInPart(v.Expansion) do
-			if e.Name == "Exit" or e.Name == "Expansion" then
-				table.insert(deletionQueue,v)
-			end
-		end
-	end
-	
-	for i, v in deletionQueue do
+task.wait(30) --WORKS
+--Insert a random entity
+newEntity(game.Workspace.Grimvine,game.Workspace.Grimvine.EntityWalkNode,69)
+
+createFirstPath(1)
+createPath(1)
+
+
+
+--If the floor is cleared, remove all entities
+floorCleared.Event:Connect(function() --WORKS
+	table.clear(activeEntities)
+
+	for i,v in allVisibleNodes do
 		v:Destroy()
 	end
-	table.clear(deletionQueue)
-end
 
+	table.clear(allVisibleNodes)
+	task.delay(30, function()
+		newEntity(game.Workspace.Grimvine,game.Workspace.Grimvine.EntityWalkNode,69)
 
---Process each door 
-local function processDoorNodes()
-	--This function will check all DOOR PART HITBOXES to see if there is a entrance part
-	--This can also just increase its size ig if i need to
-	for i, v in doorQueue do
-		local currentDoor = replicatedStorage.Objects.Door:Clone()
-		currentDoor.Parent = game.Workspace
-		currentDoor:PivotTo(v.CFrame)
-	end
-end
+		createPath(1)
 
---Start the floor building process
-local function newFloor()
-	while #exitQueue > 0 and roomCount < 50 do
-		roomNumber = math.random(1,#BasicRooms)
-		if checkHitbox(roomNumber) then
-			task.wait(.1)
-			generateRoom(roomNumber)
+	end)
+end)
+
+task.wait(10)
+activeEntities[1].isActive = true    
+
+heartBreat.Heartbeat:Connect(function(deltaTime:number)
+	
+	if deltaTime > .5 then return end
+	
+	for i, v in activeEntities do
+		local index = v.currentNode
+
+		if not v.isActive or not v.entityPath or not v.entityPath[index] then continue end --SAFE GUARD. If the array is empty or nothing is at the first index, skip this frame
+
+		local distance = ((v.entityPath[index].Position - v.entityPosition)::Vector3)
+
+		if distance.Magnitude >= .5 then
+			local factoredTime = (distance.Unit * deltaTime * v.Speed)::Vector3 --Distance * Delta * Studs
+			local step = factoredTime + v.entityPosition --We add to the current position with our new vector3
+			v.entityPosition = step --Set the previous value to this new step
+
+			v.entityModel:PivotTo(CFrame.new(step)) --Move the entity
+		elseif v.currentNode == #v.entityPath then --if <= .2 studs and its at the last index create a new path
+			v.currentNode = 1
+			v.entityModel.EntityWalkNode.Captured.Playing = true --sound
+			v.entityPath = v.entityNextPath --Point to this path and create a second path to utilize later
+			createPath(1)
+		else --Go to next node
+			v.currentNode += 1
 		end
 	end
-
-	table.clear(exitQueue)
-	processConnections()
-	processDoorNodes()
-end
-
-
-for i = 0, 0 do
-	newFloor()
-	task.wait(20)
-	--clearFloor()
-	task.wait(1)
-end
-
---[[
-local start = game.Workspace.StartRoom
-local replicatedStorage = game:GetService("ReplicatedStorage")
-local currentRoom = start
-local newRoom
-
-for i = 1, 4 do
-	
-	newRoom = replicatedStorage.BasicRooms.Straight.StraightLonger.RoomModel:Clone()
-	newRoom.Parent = game.Workspace
-	newRoom:PivotTo(currentRoom.Exit.CFrame)
-	currentRoom = newRoom
-end
-]]
-
---PreviousRoom -> The last room that was placed
---CurrentRoom -> The new room awaiting to be placed
---CurrentHitbox -> The new hitbox
-
-
---[[
-if ROOM.Name == "T" then
-	for i = 1, 4 do
-		ROOM.
-end
-]]
-
---~[Idea 1]: [(New Barrier Length)+(Old Barrier Length)]/2 spawning in a room [DEPRECATED]
---Idea 2: Make the model hitbox have a entrance point that snaps to the exit of the previous room 
---2.1 Expansion: The model will have to have a entrance point in its hitbox now
+end)
